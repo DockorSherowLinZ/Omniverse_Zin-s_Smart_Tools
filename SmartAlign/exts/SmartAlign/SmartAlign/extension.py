@@ -1,5 +1,9 @@
 import omni.ext
 import omni.ui as ui
+import omni.kit.commands
+
+from pxr import Usd, Sdf, Gf, Tf, UsdGeom, UsdPhysics, UsdShade
+from omni.ui import color as cl
 
 
 # Functions and vars are available to other extension as usual in python: `example.python_ext.some_public_function(x)`
@@ -19,7 +23,7 @@ class SmartalignExtension(omni.ext.IExt):
 
         self._count = 0
 
-        self._window = ui.Window("My Window", width=300, height=300)
+        self._window = ui.Window("Smart Align", width=300, height=300)
         with self._window.frame:
             with ui.VStack():
                 label = ui.Label("")
