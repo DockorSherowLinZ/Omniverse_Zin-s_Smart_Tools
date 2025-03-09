@@ -5,18 +5,19 @@ import omni.kit.commands
 from pxr import Usd, Sdf, Gf, Tf, UsdGeom, UsdPhysics, UsdShade
 from omni.ui import color as cl
 
-stage = omni.usd.get_context().get_stage()
+#stage = omni.usd.get_context().get_stage()
 
 def some_public_function(x: int):
-    print("[wistron_zin] some_public_function was called with x: ", x)
+    print("[SmartReference] some_public_function was called with x: ", x)
     return x ** x
 
-class Wistron_zinExtension(omni.ext.IExt):
+class SmartreferenceExtension(omni.ext.IExt):
     def on_startup(self, ext_id):
-        print("[wistron_zin] wistron_zin startup")
+        print("[SmartReference] SmartReference startup")
 
         self._window = ui.Window("Reference Assets", width=350, height=400)
-        
+        self.stage = omni.usd.get_context().get_stage()
+               
         with self._window.frame:
             field_input = {
                 'background_color': cl(30),
@@ -48,6 +49,7 @@ class Wistron_zinExtension(omni.ext.IExt):
                 'color': cl(110),               
                 'margin': 4,
             }
+            
             with ui.VStack(height=18):
                 with ui.HStack(width=200):
                     ui.Label("Start index:", name="text",style=field_label)
@@ -79,7 +81,7 @@ class Wistron_zinExtension(omni.ext.IExt):
                     for i in range(start_index, end_index + 1):  # 設定物件的 URL
                         path_str = generate_path(i, width)
                         path = Sdf.Path(path_str)
-                        prim = stage.GetPrimAtPath(path)
+                        prim = self.stage.GetPrimAtPath(path)
 
                         if prim.IsValid():  # 遍歷所有指定的路徑，檢查每個路徑上的 prim 是否有效
                             prim.GetReferences().AddReference(asset_path)
@@ -97,6 +99,6 @@ class Wistron_zinExtension(omni.ext.IExt):
                     ui.Button("Confirm", clicked_fn=on_click, alignment=ui.Alignment.CENTER, height=40, width=150)
                     ui.Label("When referencing objects, first set the start index, end index,and the number of digits count.\n Then, set the path and URL of the reference object.", name="text",word_wrap=True,style=field_context)
              
-
     def on_shutdown(self):
-        print("[wistron_zin] wistron_zin shutdown")
+        print("[SmartReference] SmartReference shutdown")
+

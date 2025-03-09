@@ -13,8 +13,6 @@ class SmartmeasureExtension(omni.ext.IExt):
     def on_startup(self, ext_id):
         print("[SmartMeasure] SmartMeasure startup")
 
-        self._count = 0
-
         self._window = ui.Window("Smart Measure", width=300, height=300)
         with self._window.frame:
             with ui.VStack():
@@ -46,11 +44,11 @@ class SmartmeasureExtension(omni.ext.IExt):
 
                 def on_reset():
                     self._count = 0
-                    self._label.text = "Select a object"
+                    self._label.text = "Select an object"
 
                 on_reset()
 
-                with ui.HStack():
+                with ui.VStack():
                     ui.Button("Measure", clicked_fn=on_add)
                     ui.Button("Reset", clicked_fn=on_reset)
 
