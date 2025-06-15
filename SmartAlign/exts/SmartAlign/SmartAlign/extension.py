@@ -1,5 +1,6 @@
 import omni.ext
 import omni.usd
+import omni.ui as ui
 from pxr import Usd, UsdGeom, Gf
 
 class SmartAlignExtension(omni.ext.IExt):
@@ -7,7 +8,7 @@ class SmartAlignExtension(omni.ext.IExt):
     def on_startup(self, ext_id):
         print("[SmartAlign] Startup")
         # Create a floating window for the SmartAlign UI
-        import omni.ui as ui
+        
         self._window = ui.Window("SmartAlign", width=250, height=250)
         # Build the UI with a vertical layout of buttons
         with self._window.frame:
