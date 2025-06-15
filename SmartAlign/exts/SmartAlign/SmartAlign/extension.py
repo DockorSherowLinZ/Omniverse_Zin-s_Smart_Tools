@@ -1,167 +1,148 @@
 import omni.ext
-import omni.usd
 import omni.ui as ui
-from pxr import Usd, UsdGeom, Gf
+import omni.usd
+from pxr import UsdGeom, Usd, Gf
 
-class SmartAlignExtension(omni.ext.IExt):
-    # Extension startup: create UI
+class AlignExtension(omni.ext.IExt):
     def on_startup(self, ext_id):
-        print("[SmartAlign] Startup")
-        # Create a floating window for the SmartAlign UI
-        
-        self._window = ui.Window("SmartAlign", width=250, height=250)
-        # Build the UI with a vertical layout of buttons
+        self._usd_context = omni.usd.get_context()
+        self._selection = self._usd_context.get_selection()
+        # 監聽 selection 變化
+        self._events = self._usd_context.get_stage_event_stream()
+        self._stage_event_sub = self._events.create_subscription_to_pop(
+            self._on_stage_event, name='align_extension')
+        self._current_paths = []
+        self._window = ui.Window("Align Prim Tools", width=350, height=190,
+                                 flags=ui.WINDOW_FLAGS_NO_RESIZE | ui.WINDOW_FLAGS_NO_COLLAPSE)
         with self._window.frame:
             with ui.VStack():
-                ui.Button("Left Align", clicked_fn=self._on_left_align)
-                ui.Button("Right Align", clicked_fn=self._on_right_align)
-                ui.Button("Center Align (H)", clicked_fn=self._on_center_align)
-                ui.Button("Top Align", clicked_fn=self._on_top_align)
-                ui.Button("Bottom Align", clicked_fn=self._on_bottom_align)
+                self._combo = ui.ComboBox()
+                self._combo_model = self._combo.model
+                with ui.HStack():
+                    ui.Button("Left", clicked_fn=lambda: self._align_selected("left"))
+                    ui.Button("Right", clicked_fn=lambda: self._align_selected("right"))
+                    ui.Button("Center Horizon", clicked_fn=lambda: self._align_selected("center_horizon"))
+                with ui.HStack():
+                    ui.Button("Top", clicked_fn=lambda: self._align_selected("top"))
+                    ui.Button("Bottom", clicked_fn=lambda: self._align_selected("bottom"))
+                    ui.Button("Center Vertical", clicked_fn=lambda: self._align_selected("center_vertical"))
+                with ui.HStack():
+                    ui.Button("Pivot", clicked_fn=lambda: self._align_selected("pivot"))
+                    ui.Button("Align Center", clicked_fn=lambda: self._align_selected("center"))
+        self._update_combobox()
 
     def on_shutdown(self):
-        print("[SmartAlign] Shutdown")
-        # Destroy the UI window if it exists
-        if hasattr(self, "_window") and self._window:
-            self._window.destroy()
-            self._window = None
+        self._window = None
+        self._stage_event_sub = None
 
-    def _get_selected_prims(self):
-        """Helper to get currently selected prim paths."""
-        ctx = omni.usd.get_context()
-        selection = ctx.get_selection().get_selected_prim_paths()
-        return selection
+    def _on_stage_event(self, event):
+        # 每當 SELECTION_CHANGED 事件發生時，更新 ComboBox
+        if event.type == int(omni.usd.StageEventType.SELECTION_CHANGED):
+            self._update_combobox()
 
-    def _align_prims(self, mode):
-        """Core alignment logic: compute target and move prims based on mode."""
-        paths = self._get_selected_prims()
-        if not paths or len(paths) < 2:
-            # Nothing to align if fewer than 2 prims selected
+    def _update_combobox(self):
+        sel_paths = self._selection.get_selected_prim_paths()
+        self._current_paths = sel_paths if sel_paths else []
+        for item in list(self._combo_model.get_item_children()):
+            self._combo_model.remove_item(item)
+        for path in self._current_paths:
+            self._combo_model.append_child_item(None, ui.SimpleStringModel(path))
+        if self._current_paths:
+            self._combo_model.get_item_value_model().set_value(0)
+
+    def _align_selected(self, mode):
+        if not self._current_paths:
             return
-
-        stage = omni.usd.get_context().get_stage()
-        # Determine vertical axis index (1 for Y-up, 2 for Z-up)
+        combo_index = self._combo_model.get_item_value_model().as_int
+        if combo_index is None or combo_index < 0 or combo_index >= len(self._current_paths):
+            return
+        ref_path = self._current_paths[combo_index]
+        stage = self._usd_context.get_stage()
+        if stage is None:
+            return
         up_axis = UsdGeom.GetStageUpAxis(stage)
-        vert_index = 1 if up_axis.upper() == "Y" else 2
+        vert_index = 1 if up_axis == UsdGeom.Tokens.y else 2
+        ref_bbox = self._usd_context.compute_path_world_bounding_box(ref_path)
+        if not ref_bbox:
+            return
+        ref_min, ref_max = ref_bbox
+        ref_min_x = ref_min[0]; ref_max_x = ref_max[0]
+        ref_center_x = 0.5 * (ref_min_x + ref_max_x)
+        ref_min_v = ref_min[vert_index]; ref_max_v = ref_max[vert_index]
+        ref_center_v = 0.5 * (ref_min_v + ref_max_v)
+        ref_center_3d = Gf.Vec3d(
+            (ref_min[0] + ref_max[0]) * 0.5,
+            (ref_min[1] + ref_max[1]) * 0.5,
+            (ref_min[2] + ref_max[2]) * 0.5
+        )
+        # Pivot處理
+        ref_prim = stage.GetPrimAtPath(ref_path)
+        ref_pivot = None
+        try:
+            ref_xform = UsdGeom.Xformable(ref_prim)
+            pivot_attr = ref_prim.GetAttribute("xformOp:translate:pivot")
+            if pivot_attr and pivot_attr.HasAuthoredValue():
+                ref_pivot = Gf.Vec3d(pivot_attr.Get())
+        except Exception:
+            pass
 
-        # Compute global target coordinate based on mode
-        global_min_x = float("inf")
-        global_max_x = float("-inf")
-        global_min_vert = float("inf")
-        global_max_vert = float("-inf")
-        # Store per-prim values for second pass
-        prim_bounds = {}
-
-        for path in paths:
-            # Compute world bounding box for this prim
-            (min_pt, max_pt) = omni.usd.get_context().compute_path_world_bounding_box(path)
-            # min_pt and max_pt are sequences of 3 floats (x,y,z)
-            min_x, min_y, min_z = min_pt[0], min_pt[1], min_pt[2]
-            max_x, max_y, max_z = max_pt[0], max_pt[1], max_pt[2]
-            # Track global extrema
-            if min_x < global_min_x: 
-                global_min_x = min_x
-            if max_x > global_max_x: 
-                global_max_x = max_x
-            # Vertical axis (Y or Z depending on stage up-axis)
-            min_vert = min_pt[vert_index]
-            max_vert = max_pt[vert_index]
-            if min_vert < global_min_vert:
-                global_min_vert = min_vert
-            if max_vert > global_max_vert:
-                global_max_vert = max_vert
-            # Store values for use when moving this prim
-            prim_bounds[path] = {
-                "min_x": min_x, "max_x": max_x,
-                "min_vert": min_vert, "max_vert": max_vert
-            }
-
-        # Determine target coordinate for alignment
-        if mode == "left":
-            target_x = global_min_x
-        elif mode == "right":
-            target_x = global_max_x
-        elif mode == "center":
-            target_x = 0.5 * (global_min_x + global_max_x)
-        elif mode == "top":
-            target_vert = global_max_vert
-        elif mode == "bottom":
-            target_vert = global_min_vert
-
-        # Move each prim to align
-        for path in paths:
-            prim = stage.GetPrimAtPath(path)
-            if not prim.IsValid():
+        for i, path in enumerate(self._current_paths):
+            if i == combo_index:
                 continue
-            parent = prim.GetParent()
-            # Compute parent world transform (or identity if no parent or parent is pseudo-root)
-            parent_world_mtx = Gf.Matrix4d(1.0)  # identity by default
-            if parent.IsValid() and not parent.IsPseudoRoot():
-                parent_world = omni.usd.get_context().compute_path_world_transform(parent.GetPath().pathString)
-                parent_world_mtx = Gf.Matrix4d(*parent_world)
-            parent_inv_mtx = parent_world_mtx.GetInverse()
-
-            # Calculate the offset in world space for this prim
-            offset_world = Gf.Vec3d(0, 0, 0)
-            if mode in ("left", "right", "center"):
-                # horizontal alignment (X axis)
-                current_center_x = 0.5 * (prim_bounds[path]["min_x"] + prim_bounds[path]["max_x"])
-                if mode == "left":
-                    # Align left edge
-                    offset_x = target_x - prim_bounds[path]["min_x"]
-                elif mode == "right":
-                    # Align right edge
-                    offset_x = target_x - prim_bounds[path]["max_x"]
-                elif mode == "center":
-                    # Align centers horizontally
-                    offset_x = target_x - current_center_x
-                offset_world = Gf.Vec3d(offset_x, 0, 0)
-            else:
-                # vertical alignment (Y or Z axis)
-                if mode == "top":
-                    offset_val = target_vert - prim_bounds[path]["max_vert"]
-                elif mode == "bottom":
-                    offset_val = target_vert - prim_bounds[path]["min_vert"]
-                # Apply offset along the vertical axis
-                if vert_index == 1:
-                    # Y-up stage
-                    offset_world = Gf.Vec3d(0, offset_val, 0)
-                else:
-                    # Z-up stage
-                    offset_world = Gf.Vec3d(0, 0, offset_val)
-
-            # Convert world offset to local space (account for parent transform)
-            # Treat offset as a vector (w=0) for transformation
-            offset_vec4 = Gf.Vec4d(offset_world[0], offset_world[1], offset_world[2], 0.0)
-            local_offset_vec4 = offset_vec4 * parent_inv_mtx
-            local_offset = Gf.Vec3d(local_offset_vec4[0], local_offset_vec4[1], local_offset_vec4[2])
-
-            # Get current local translation of the prim
-            # Compute prim's current local transform matrix:
-            prim_world = omni.usd.get_context().compute_path_world_transform(path)
-            prim_world_mtx = Gf.Matrix4d(*prim_world)
-            local_mtx = parent_inv_mtx * prim_world_mtx
-            # Extract translation components
-            old_local_translate = Gf.Vec3d(local_mtx[3][0], local_mtx[3][1], local_mtx[3][2])
-            # Compute new local translation
-            new_local_translate = old_local_translate + local_offset
-
-            # Execute the transform command to move the prim
-            omni.kit.commands.execute(
-                "TransformPrimSRTCommand",
-                path=path,
-                new_translation=new_local_translate,
-                old_translation=old_local_translate
+            prim = stage.GetPrimAtPath(path)
+            if not prim:
+                continue
+            bbox = self._usd_context.compute_path_world_bounding_box(path)
+            if not bbox:
+                continue
+            cur_min, cur_max = bbox
+            cur_min_x = cur_min[0]; cur_max_x = cur_max[0]
+            cur_center_x = 0.5 * (cur_min_x + cur_max_x)
+            cur_min_v = cur_min[vert_index]; cur_max_v = cur_max[vert_index]
+            cur_center_v = 0.5 * (cur_min_v + cur_max_v)
+            cur_center_3d = Gf.Vec3d(
+                (cur_min[0] + cur_max[0]) * 0.5,
+                (cur_min[1] + cur_max[1]) * 0.5,
+                (cur_min[2] + cur_max[2]) * 0.5
             )
-
-    # Define one method per alignment mode that calls _align_prims with the mode
-    def _on_left_align(self):
-        self._align_prims(mode="left")
-    def _on_right_align(self):
-        self._align_prims(mode="right")
-    def _on_center_align(self):
-        self._align_prims(mode="center")
-    def _on_top_align(self):
-        self._align_prims(mode="top")
-    def _on_bottom_align(self):
-        self._align_prims(mode="bottom")
+            xform = UsdGeom.XformCommonAPI(prim)
+            current_translate, _, _, _, _ = xform.GetXformVectors(Usd.TimeCode.Default())
+            translate_delta = [0.0, 0.0, 0.0]
+            if mode == "left":
+                translate_delta[0] = ref_min_x - cur_min_x
+            elif mode == "right":
+                translate_delta[0] = ref_max_x - cur_max_x
+            elif mode == "center_horizon":
+                translate_delta[0] = ref_center_x - cur_center_x
+            elif mode == "top":
+                translate_delta[vert_index] = ref_max_v - cur_max_v
+            elif mode == "bottom":
+                translate_delta[vert_index] = ref_min_v - cur_min_v
+            elif mode == "center_vertical":
+                translate_delta[vert_index] = ref_center_v - cur_center_v
+            elif mode == "pivot" and ref_pivot is not None:
+                pivot_attr = prim.GetAttribute("xformOp:translate:pivot")
+                if pivot_attr and pivot_attr.HasAuthoredValue():
+                    cur_pivot = Gf.Vec3d(pivot_attr.Get())
+                    translate_delta = [
+                        ref_pivot[0] - cur_pivot[0],
+                        ref_pivot[1] - cur_pivot[1],
+                        ref_pivot[2] - cur_pivot[2]
+                    ]
+                else:
+                    continue
+            elif mode == "center":
+                # Align object's bounding box center to reference object's center (3D)
+                translate_delta = [
+                    ref_center_3d[0] - cur_center_3d[0],
+                    ref_center_3d[1] - cur_center_3d[1],
+                    ref_center_3d[2] - cur_center_3d[2]
+                ]
+            else:
+                continue
+            new_translate = (
+                current_translate[0] + translate_delta[0],
+                current_translate[1] + translate_delta[1],
+                current_translate[2] + translate_delta[2]
+            )
+            xform.SetTranslate(new_translate)
