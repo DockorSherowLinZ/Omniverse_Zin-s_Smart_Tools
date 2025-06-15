@@ -7,7 +7,8 @@ class SmartAlignExtension(omni.ext.IExt):
     # Extension startup: create UI
     def on_startup(self, ext_id):
         print("[SmartAlign] Startup")
-        # Create a floating window for the SmartAlign UI        
+        # Create a floating window for the SmartAlign UI
+        
         self._window = ui.Window("SmartAlign", width=250, height=250)
         # Build the UI with a vertical layout of buttons
         with self._window.frame:
