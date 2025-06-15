@@ -3,7 +3,7 @@
 version = "1.0.0"
 
 # Lists people or organizations that are considered the "authors" of the package.
-authors = ["NVIDIA"]
+authors = ["Zin Lien"]
 
 # The title and description fields are primarily for displaying extension info in UI
 title = "SmartMeasure"
@@ -16,10 +16,10 @@ readme  = "docs/README.md"
 repository = ""
 
 # One of categories for UI.
-category = "Example"
+category = "Tool"
 
 # Keywords for the extension
-keywords = ["kit", "example"]
+keywords = ["kit", "tool"]
 
 # Location of change log file in target (final) folder of extension, relative to the root.
 # More info on writing changelog: https://keepachangelog.com/en/1.0.0/
